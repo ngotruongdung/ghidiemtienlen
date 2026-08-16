@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Round, DEFAULT_PLAYERS, DEFAULT_BETTING_LEVELS } from './types';
-import { Trash2, Plus, RefreshCcw, Eraser, Trophy, AlertCircle, X } from 'lucide-react';
+import { Trash2, RefreshCcw, Eraser, Trophy, AlertCircle, X } from 'lucide-react';
 
 // Helper to generate unique IDs
 const generateId = () => Math.random().toString(36).substring(2, 9);
+const createEmptyRound = (): Round => ({ id: generateId(), scores: ['', '', '', ''] });
 
 const App: React.FC = () => {
   // Check if setup is complete
@@ -44,29 +45,42 @@ const App: React.FC = () => {
     roundsEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [rounds.length]);
 
+  useEffect(() => {
+    if (!showSetup && rounds.length === 0) {
+      setRounds([createEmptyRound()]);
+      setFocusedInput({ roundIndex: 0, playerIndex: 0 });
+    }
+  }, [showSetup, rounds.length]);
+
   const handlePlayerNameChange = (index: number, name: string) => {
     const newPlayers = [...players];
     newPlayers[index] = name;
     setPlayers(newPlayers);
   };
 
-  const addRound = useCallback(() => {
-    setRounds(prev => [...prev, { id: generateId(), scores: ['', '', '', ''] }]);
-  }, []);
+  const autoFillFinalScore = (scores: (number | string)[]) => {
+    const emptyIndexes = scores
+      .map((score, index) => (typeof score === 'number' ? -1 : index))
+      .filter(index => index !== -1);
 
-  const updateScore = (roundIndex: number, playerIndex: number, value: string) => {
-    // Allow empty string, minus sign, or valid numbers
-    if (value !== '' && value !== '-' && isNaN(Number(value))) {
-        return;
+    if (emptyIndexes.length !== 1) {
+      return scores;
     }
 
-    setRounds(prev => {
-      const newRounds = [...prev];
-      const newScores = [...newRounds[roundIndex].scores];
-      newScores[playerIndex] = value === '' ? '' : (value === '-' ? '-' : Number(value));
-      newRounds[roundIndex] = { ...newRounds[roundIndex], scores: newScores };
-      return newRounds;
-    });
+    const enteredTotal = scores.reduce(
+      (sum: number, score) => sum + (typeof score === 'number' ? score : 0),
+      0
+    );
+    const completedScores = [...scores];
+    completedScores[emptyIndexes[0]] = -enteredTotal;
+    return completedScores;
+  };
+
+  const isCompleteBalancedRound = (scores: (number | string)[]) => {
+    return (
+      scores.every(score => typeof score === 'number') &&
+      scores.reduce((sum: number, score) => sum + (score as number), 0) === 0
+    );
   };
 
   const deleteRound = (id: string) => {
@@ -118,16 +132,29 @@ const App: React.FC = () => {
   };
 
   const applyBettingToInput = (roundIndex: number, playerIndex: number, amount: number) => {
+    let nextFocus: { roundIndex: number; playerIndex: number } | null = null;
+
     setRounds(prev => {
       const newRounds = [...prev];
       if (roundIndex >= newRounds.length) return prev;
       const newScores = [...newRounds[roundIndex].scores];
       const currentScore = newScores[playerIndex];
       const currentValue = typeof currentScore === 'number' ? currentScore : 0;
-      newScores[playerIndex] = currentValue + amount;
-      newRounds[roundIndex] = { ...newRounds[roundIndex], scores: newScores };
+      newScores[playerIndex] = amount === 0 ? 0 : currentValue + amount;
+      const completedScores = autoFillFinalScore(newScores);
+      newRounds[roundIndex] = { ...newRounds[roundIndex], scores: completedScores };
+
+      if (roundIndex === newRounds.length - 1 && isCompleteBalancedRound(completedScores)) {
+        newRounds.push(createEmptyRound());
+        nextFocus = { roundIndex: newRounds.length - 1, playerIndex: 0 };
+      }
+
       return newRounds;
     });
+
+    if (nextFocus) {
+      setFocusedInput(nextFocus);
+    }
   };
 
   // Calculate totals
@@ -303,11 +330,12 @@ const App: React.FC = () => {
                       <div key={playerIdx} className="min-w-0">
                           <input
                             type="text"
-                            inputMode="text"
+                            inputMode="none"
                             value={score}
                             placeholder="-"
-                            onChange={(e) => updateScore(roundIdx, playerIdx, e.target.value)}
+                            readOnly
                             onFocus={() => setFocusedInput({ roundIndex: roundIdx, playerIndex: playerIdx })}
+                            onClick={() => setFocusedInput({ roundIndex: roundIdx, playerIndex: playerIdx })}
                             className={`w-full bg-slate-800/50 text-center rounded-xl py-3 md:py-3.5 border-2 transition-all font-mono text-base md:text-lg font-semibold shadow-sm
                              ${typeof score === 'number' && score < 0 ? 'text-rose-400' : (score && Number(score) > 0 ? 'text-emerald-400' : 'text-slate-400')}
                              ${showWarning ? 'border-rose-500/30 focus:border-rose-500/60 focus:ring-2 focus:ring-rose-500/20' : 'border-slate-700/30 focus:border-emerald-500/60 focus:ring-2 focus:ring-emerald-500/20'}
@@ -372,20 +400,9 @@ const App: React.FC = () => {
              <div></div>
         </div>
 
-        {/* Add Button */}
-        <div className="p-4">
-            <button
-                onClick={addRound}
-                className="w-full flex items-center justify-center gap-2.5 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white py-4 rounded-2xl font-bold text-base shadow-xl shadow-emerald-950/50 active:scale-[0.98] transition-all"
-            >
-                <Plus size={22} strokeWidth={3} />
-                <span>Thêm ván mới</span>
-            </button>
-        </div>
-
         {/* Quick Betting Buttons */}
-        <div className="px-4 pb-4">
-          <div className="grid grid-cols-4 gap-2.5">
+        <div className="p-4">
+          <div className="grid grid-cols-5 gap-2.5">
             <button
               onClick={() => handleBettingClick(bettingLevels[0])}
               className="bg-gradient-to-br from-emerald-600/20 to-emerald-600/10 hover:from-emerald-600/30 hover:to-emerald-600/20 text-emerald-300 py-3 rounded-xl font-bold text-sm transition-all active:scale-95 border border-emerald-500/30 shadow-md shadow-emerald-950/20"
@@ -397,6 +414,12 @@ const App: React.FC = () => {
               className="bg-gradient-to-br from-emerald-600/20 to-emerald-600/10 hover:from-emerald-600/30 hover:to-emerald-600/20 text-emerald-300 py-3 rounded-xl font-bold text-sm transition-all active:scale-95 border border-emerald-500/30 shadow-md shadow-emerald-950/20"
             >
               +{bettingLevels[1]}
+            </button>
+            <button
+              onClick={() => handleBettingClick(0)}
+              className="bg-gradient-to-br from-slate-600/20 to-slate-600/10 hover:from-slate-600/30 hover:to-slate-600/20 text-slate-200 py-3 rounded-xl font-bold text-sm transition-all active:scale-95 border border-slate-500/30 shadow-md shadow-black/10"
+            >
+              0
             </button>
             <button
               onClick={() => handleBettingClick(-bettingLevels[0])}
